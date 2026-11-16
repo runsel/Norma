@@ -31,6 +31,19 @@ type WebFetchConfig struct {
 	// InsecureTLS skips TLS certificate verification entirely (equivalent to
 	// curl -k). A blunt fallback when no CA cert is available; prefer CACert.
 	InsecureTLS bool
+	// UserAgent, when set, is sent as the User-Agent on every fetch. Empty leaves
+	// the header unset (the caller's HTTP stack default applies). This exists so a
+	// host application can present its own client identity instead of a product
+	// string that identifies the tool.
+	UserAgent string
+	// AcceptLanguage, when set, is sent as Accept-Language so the request matches
+	// the locale implied by UserAgent. Empty leaves it unset.
+	AcceptLanguage string
+	// AllowDirectFallback permits retrying a proxied fetch directly (bypassing the
+	// proxy) when the failure looks proxy-caused. Default false: the direct request
+	// is invisible to the recording proxy AND bypasses any egress sanitizer, so it
+	// is opt-in rather than automatic.
+	AllowDirectFallback bool
 }
 
 // NewWebFetch builds the WebFetch tool: fetches a URL over HTTP(S) and returns
@@ -155,14 +168,29 @@ func staticAssetExt(rawURL string) string {
 	return ""
 }
 
+// applyIdentity sets the configured client identity headers on a fetch request.
+// It never sets Accept-Encoding: setting it explicitly disables the Go transport's
+// transparent decompression, which would leave gzip bodies unreadable to a host
+// application that stores or replays them.
+func applyIdentity(req *http.Request, cfg WebFetchConfig) {
+	if cfg.UserAgent != "" {
+		req.Header.Set("user-agent", cfg.UserAgent)
+	}
+	if cfg.AcceptLanguage != "" {
+		req.Header.Set("accept-language", cfg.AcceptLanguage)
+	}
+}
+
 func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *ToolContext) (Result, error) {
 	client := newFetchClient(cfg)
 	// direct is the no-proxy fallback used when a proxied fetch fails for a
 	// proxy-caused reason (closed tunnel / failed CONNECT / TLS or HTTP2 mismatch):
 	// it bypasses the configured proxy so a recording/MITM hiccup doesn't fail an
-	// otherwise-reachable URL. nil when no proxy is configured (nothing to bypass).
+	// otherwise-reachable URL. nil when no proxy is configured (nothing to bypass)
+	// or when the caller did not opt in with AllowDirectFallback — a direct request
+	// is invisible to the recording proxy and bypasses any egress sanitizer.
 	var direct *http.Client
-	if cfg.Proxy != "" {
+	if cfg.Proxy != "" && cfg.AllowDirectFallback {
 		direct = newFetchClient(WebFetchConfig{InsecureTLS: cfg.InsecureTLS})
 	}
 	return func(ctx context.Context, input json.RawMessage, _ *ToolContext) (Result, error) {
@@ -185,14 +213,15 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 		if err != nil {
 			return Errorf("Error: " + err.Error()), nil
 		}
-		req.Header.Set("user-agent", "norma/0.4")
+		applyIdentity(req, cfg)
 		resp, err := client.Do(req)
-		// One direct retry when the proxied attempt failed for a proxy-caused reason.
-		// A non-proxy error (bad host, caller timeout/cancel) is returned as-is — a
-		// direct retry wouldn't fix it. The direct response is NOT captured by the proxy.
+		// One direct retry when the proxied attempt failed for a proxy-caused reason
+		// AND the caller opted into it. A non-proxy error (bad host, caller
+		// timeout/cancel) is returned as-is — a direct retry wouldn't fix it. The
+		// direct response is NOT captured by the proxy.
 		if err != nil && direct != nil && proxyLikelyErr(err) {
 			if r2, e2 := http.NewRequestWithContext(cctx, http.MethodGet, in.URL, nil); e2 == nil {
-				r2.Header.Set("user-agent", "norma/0.4")
+				applyIdentity(r2, cfg)
 				if resp2, err2 := direct.Do(r2); err2 == nil {
 					resp, err = resp2, nil
 				} else {
