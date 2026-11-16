@@ -103,6 +103,15 @@ type Options struct {
 	// WebFetchInsecureTLS skips TLS verification for WebFetch (curl -k). Blunt
 	// fallback when no CA cert is available; prefer WebFetchCACert.
 	WebFetchInsecureTLS bool
+	// WebFetchUserAgent, when set, is the User-Agent WebFetch presents. Empty
+	// leaves it unset so the host HTTP stack's default applies.
+	WebFetchUserAgent string
+	// WebFetchAcceptLanguage, when set, is the Accept-Language WebFetch presents.
+	WebFetchAcceptLanguage string
+	// WebFetchAllowDirectFallback lets WebFetch retry directly (bypassing the
+	// configured proxy) when a proxied attempt fails for a proxy-caused reason.
+	// Default false: that retry is invisible to the recording proxy.
+	WebFetchAllowDirectFallback bool
 	// EnableWebSearch adds the network-facing web_search tool (permission-gated).
 	EnableWebSearch bool
 	// WebSearchBackend selects the search backend: "ddgs" (DuckDuckGo, no key),
@@ -281,7 +290,14 @@ func NewSession(opts Options) *Session {
 		tools = append(tools, opts.Skills.Tool())
 	}
 	if opts.EnableWebFetch {
-		tools = append(tools, tool.NewWebFetch(tool.WebFetchConfig{Proxy: opts.WebFetchProxy, CACert: opts.WebFetchCACert, InsecureTLS: opts.WebFetchInsecureTLS}))
+		tools = append(tools, tool.NewWebFetch(tool.WebFetchConfig{
+			Proxy:               opts.WebFetchProxy,
+			CACert:              opts.WebFetchCACert,
+			InsecureTLS:         opts.WebFetchInsecureTLS,
+			UserAgent:           opts.WebFetchUserAgent,
+			AcceptLanguage:      opts.WebFetchAcceptLanguage,
+			AllowDirectFallback: opts.WebFetchAllowDirectFallback,
+		}))
 	}
 	if opts.EnableWebSearch {
 		// A misconfigured backend (unknown name, or brave-free without a key)

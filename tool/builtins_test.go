@@ -243,9 +243,11 @@ func TestProxyLikelyErr(t *testing.T) {
 	}
 }
 
-// TestWebFetchProxyFallback proves a proxied fetch that fails for a proxy-caused
-// reason (here: the proxy port is dead → connection refused) retries once directly
-// (no proxy) and reaches the target. A successful fetch is not annotated.
+// TestWebFetchProxyFallback proves an OPT-IN proxied fetch that fails for a
+// proxy-caused reason (here: the proxy port is dead → connection refused) retries
+// once directly (no proxy) and reaches the target. A successful fetch is not
+// annotated. The fallback is opt-in because a direct request bypasses the
+// recording proxy (see TestWebFetchNoDirectFallbackByDefault).
 func TestWebFetchProxyFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "text/html")
@@ -253,7 +255,7 @@ func TestWebFetchProxyFallback(t *testing.T) {
 	}))
 	defer srv.Close()
 	raw, _ := json.Marshal(map[string]any{"url": srv.URL})
-	res, err := NewWebFetch(WebFetchConfig{Proxy: "http://127.0.0.1:1"}).Call(context.Background(), raw, &ToolContext{})
+	res, err := NewWebFetch(WebFetchConfig{Proxy: "http://127.0.0.1:1", AllowDirectFallback: true}).Call(context.Background(), raw, &ToolContext{})
 	if err != nil {
 		t.Fatalf("webfetch: %v", err)
 	}
